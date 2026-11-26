@@ -1,0 +1,68 @@
+name: Auto Build JAR
+on:
+  push:
+    paths:
+      - 'project.zip'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Unzip and Build JAR
+        run: |
+          rm -rf build_dir out_jar jar_staging
+          mkdir -p build_dir out_jar jar_staging
+          unzip -q project.zip -d build_dir
+
+          POM=$(find build_dir -name "pom.xml" | head -n 1)
+          GRADLE=$(find build_dir -name "build.gradle*" | head -n 1)
+
+          if [ -n "$POM" ]; then
+            echo "Maven projesi bulundu, derleniyor..."
+            cd "$(dirname "$POM")"
+            mvn clean package -DskipTests
+            find . -type f -name "*.jar" ! -name "*original*" ! -name "*sources*" ! -name "*javadoc*" -exec cp {} "$GITHUB_WORKSPACE/out_jar/" \;
+          elif [ -n "$GRADLE" ]; then
+            echo "Gradle projesi bulundu, derleniyor..."
+            cd "$(dirname "$GRADLE")"
+            if [ -f "gradlew" ]; then
+              chmod +x gradlew
+              ./gradlew build -x test
+            else
+              gradle build -x test
+            fi
+            find . -type f -name "*.jar" ! -name "*original*" ! -name "*sources*" ! -name "*javadoc*" -exec cp {} "$GITHUB_WORKSPACE/out_jar/" \;
+          else
+            echo "Gradle/Maven dosyasi yok. Mevcut .class ve .java dosyalari paketleniyor..."
+            ORIG_DIR=$(find build_dir -type d -name "ilkindlcClient_original" | head -n 1)
+            SRC_DIR=$(find build_dir -type d -name "src" | head -n 1)
+
+            if [ -n "$ORIG_DIR" ]; then
+              cp -r "$ORIG_DIR"/* jar_staging/
+            fi
+
+            if [ -n "$SRC_DIR" ]; then
+              find "$SRC_DIR" -name "*.java" > sources.txt
+              if [ -s sources.txt ]; then
+                javac -encoding UTF-8 -cp "jar_staging:." -d jar_staging @sources.txt || echo "Bazi .java dosyalarinda eksik bagimlilik olabilir, mevcut dosyalarla devam ediliyor..."
+              fi
+            fi
+
+            jar cf out_jar/ilkindlcClient-built.jar -C jar_staging .
+          fi
+
+          ls -lh out_jar/
+
+      - name: Upload JAR Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: compiled-jar
+          path: out_jar/*.jar

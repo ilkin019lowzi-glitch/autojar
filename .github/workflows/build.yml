@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - 'project.zip'
+      - 'ilkindl.zip'
 
 jobs:
   build:
@@ -19,9 +19,17 @@ jobs:
 
       - name: Unzip and Build JAR
         run: |
+          set -e
           rm -rf build_dir out_jar jar_staging
           mkdir -p build_dir out_jar jar_staging
-          unzip -q project.zip -d build_dir
+
+          if [ ! -f "ilkindl.zip" ]; then
+            echo "HATA: Repoda ilkindl.zip bulunamadi!"
+            ls -la
+            exit 1
+          fi
+
+          unzip -q ilkindl.zip -d build_dir
 
           POM=$(find build_dir -name "pom.xml" | head -n 1)
           GRADLE=$(find build_dir -name "build.gradle*" | head -n 1)
@@ -42,18 +50,18 @@ jobs:
             fi
             find . -type f -name "*.jar" ! -name "*original*" ! -name "*sources*" ! -name "*javadoc*" -exec cp {} "$GITHUB_WORKSPACE/out_jar/" \;
           else
-            echo "Gradle/Maven dosyasi yok. Mevcut .class ve .java dosyalari paketleniyor..."
+            echo "Gradle/Maven dosyasi yok. Mevcut dosyalar paketleniyor..."
             ORIG_DIR=$(find build_dir -type d -name "ilkindlcClient_original" | head -n 1)
             SRC_DIR=$(find build_dir -type d -name "src" | head -n 1)
 
             if [ -n "$ORIG_DIR" ]; then
-              cp -r "$ORIG_DIR"/* jar_staging/
+              cp -r "$ORIG_DIR"/* jar_staging/ 2>/dev/null || true
             fi
 
             if [ -n "$SRC_DIR" ]; then
               find "$SRC_DIR" -name "*.java" > sources.txt
               if [ -s sources.txt ]; then
-                javac -encoding UTF-8 -cp "jar_staging:." -d jar_staging @sources.txt || echo "Bazi .java dosyalarinda eksik bagimlilik olabilir, mevcut dosyalarla devam ediliyor..."
+                javac -encoding UTF-8 -cp "jar_staging:." -d jar_staging @sources.txt || echo "Uyari: Bazi .java dosyalarinda eksik bagimlilik olabilir, mevcut dosyalarla devam ediliyor..."
               fi
             fi
 

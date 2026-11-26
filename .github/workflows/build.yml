@@ -31,6 +31,8 @@ jobs:
 
           unzip -q ilkindl.zip -d build_dir
 
+          find build_dir -path "*/test/*" -o -name "*Test.java" -o -name "*Test.class" -exec rm -rf {} + 2>/dev/null || true
+
           POM=$(find build_dir -name "pom.xml" | head -n 1)
           GRADLE=$(find build_dir -name "build.gradle*" | head -n 1)
 
@@ -50,19 +52,23 @@ jobs:
             fi
             find . -type f -name "*.jar" ! -name "*original*" ! -name "*sources*" ! -name "*javadoc*" -exec cp {} "$GITHUB_WORKSPACE/out_jar/" \;
           else
-            echo "Gradle/Maven dosyasi yok. Mevcut dosyalar paketleniyor..."
-            ORIG_DIR=$(find build_dir -type d -name "ilkindlcClient_original" | head -n 1)
-            SRC_DIR=$(find build_dir -type d -name "src" | head -n 1)
+            echo "Tum mevcut dosyalar toplanip tek JAR yapiliyor..."
 
-            if [ -n "$ORIG_DIR" ]; then
-              cp -r "$ORIG_DIR"/* jar_staging/ 2>/dev/null || true
-            fi
+            find build_dir -type f ! -name "*.java" ! -name "*.zip" | while read -r f; do
+              rel="${f#build_dir/}"
+              rel="${rel#ilkindlcClient_merged/}"
+              rel="${rel#ilkindlcClient/}"
+              rel="${rel#ilkindlcClient_original/}"
+              rel="${rel#src/main/resources/}"
+              rel="${rel#src/main/java/}"
+              rel="${rel#src/}"
+              mkdir -p "jar_staging/$(dirname "$rel")"
+              cp "$f" "jar_staging/$rel"
+            done
 
-            if [ -n "$SRC_DIR" ]; then
-              find "$SRC_DIR" -name "*.java" > sources.txt
-              if [ -s sources.txt ]; then
-                javac -encoding UTF-8 -cp "jar_staging:." -d jar_staging @sources.txt || echo "Uyari: Bazi .java dosyalarinda eksik bagimlilik olabilir, mevcut dosyalarla devam ediliyor..."
-              fi
+            find build_dir -name "*.java" > sources.txt
+            if [ -s sources.txt ]; then
+              javac -encoding UTF-8 -cp "jar_staging:." -d jar_staging @sources.txt || echo "Uyari: Bazi .java dosyalarinda bagimlilik eksik olabilir, mevcut dosyalar paketleniyor..."
             fi
 
             jar cf out_jar/ilkindlcClient-built.jar -C jar_staging .

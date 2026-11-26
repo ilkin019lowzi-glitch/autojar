@@ -36,22 +36,35 @@ jobs:
           POM=$(find build_dir -name "pom.xml" 2>/dev/null | head -n 1)
           GRADLE=$(find build_dir -name "build.gradle*" 2>/dev/null | head -n 1)
 
+          MAVEN_OK=0
           if [ -n "$POM" ]; then
             echo "Maven projesi bulundu, derleniyor..."
-            cd "$(dirname "$POM")"
-            mvn clean package -DskipTests
-            find . -type f -name "*.jar" ! -name "*original*" ! -name "*sources*" ! -name "*javadoc*" -exec cp {} "$GITHUB_WORKSPACE/out_jar/" \;
-          elif [ -n "$GRADLE" ]; then
-            echo "Gradle projesi bulundu, derleniyor..."
-            cd "$(dirname "$GRADLE")"
-            if [ -f "gradlew" ]; then
-              chmod +x gradlew
-              ./gradlew build -x test
+            POM_DIR="$(dirname "$POM")"
+            if mvn -f "$POM" clean package -DskipTests -Dmaven.antrun.skip=true; then
+              find "$POM_DIR" -type f -name "*.jar" ! -name "*original*" ! -name "*sources*" ! -name "*javadoc*" -exec cp {} "$GITHUB_WORKSPACE/out_jar/" \; 2>/dev/null || true
+              if [ -n "$(ls -A "$GITHUB_WORKSPACE/out_jar" 2>/dev/null)" ]; then
+                MAVEN_OK=1
+              fi
             else
-              gradle build -x test
+              echo "Uyari: Maven antrun/eksik dosya nedeniyle durdu, mevcut dosyalar paketleniyor..."
             fi
-            find . -type f -name "*.jar" ! -name "*original*" ! -name "*sources*" ! -name "*javadoc*" -exec cp {} "$GITHUB_WORKSPACE/out_jar/" \;
-          else
+          fi
+
+          if [ "$MAVEN_OK" -eq 0 ] && [ -n "$GRADLE" ]; then
+            echo "Gradle projesi bulundu, derleniyor..."
+            GRADLE_DIR="$(dirname "$GRADLE")"
+            (
+              cd "$GRADLE_DIR"
+              if [ -f "gradlew" ]; then
+                chmod +x gradlew
+                ./gradlew build -x test
+              else
+                gradle build -x test
+              fi
+            ) && find "$GRADLE_DIR" -type f -name "*.jar" ! -name "*original*" ! -name "*sources*" ! -name "*javadoc*" -exec cp {} "$GITHUB_WORKSPACE/out_jar/" \; 2>/dev/null || true
+          fi
+
+          if [ -z "$(ls -A out_jar 2>/dev/null)" ]; then
             echo "Erisilebilen mevcut dosyalar toplanip tek JAR yapiliyor..."
 
             find build_dir -type f ! -name "*.java" ! -name "*.zip" 2>/dev/null | while read -r f; do

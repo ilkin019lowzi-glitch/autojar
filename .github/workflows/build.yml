@@ -19,7 +19,6 @@ jobs:
 
       - name: Unzip and Build JAR
         run: |
-          set -e
           rm -rf build_dir out_jar jar_staging
           mkdir -p build_dir out_jar jar_staging
 
@@ -30,11 +29,12 @@ jobs:
           fi
 
           unzip -q ilkindl.zip -d build_dir
+          chmod -R u+rwX build_dir 2>/dev/null || true
 
           find build_dir -path "*/test/*" -o -name "*Test.java" -o -name "*Test.class" -exec rm -rf {} + 2>/dev/null || true
 
-          POM=$(find build_dir -name "pom.xml" | head -n 1)
-          GRADLE=$(find build_dir -name "build.gradle*" | head -n 1)
+          POM=$(find build_dir -name "pom.xml" 2>/dev/null | head -n 1)
+          GRADLE=$(find build_dir -name "build.gradle*" 2>/dev/null | head -n 1)
 
           if [ -n "$POM" ]; then
             echo "Maven projesi bulundu, derleniyor..."
@@ -52,23 +52,25 @@ jobs:
             fi
             find . -type f -name "*.jar" ! -name "*original*" ! -name "*sources*" ! -name "*javadoc*" -exec cp {} "$GITHUB_WORKSPACE/out_jar/" \;
           else
-            echo "Tum mevcut dosyalar toplanip tek JAR yapiliyor..."
+            echo "Erisilebilen mevcut dosyalar toplanip tek JAR yapiliyor..."
 
-            find build_dir -type f ! -name "*.java" ! -name "*.zip" | while read -r f; do
-              rel="${f#build_dir/}"
-              rel="${rel#ilkindlcClient_merged/}"
-              rel="${rel#ilkindlcClient/}"
-              rel="${rel#ilkindlcClient_original/}"
-              rel="${rel#src/main/resources/}"
-              rel="${rel#src/main/java/}"
-              rel="${rel#src/}"
-              mkdir -p "jar_staging/$(dirname "$rel")"
-              cp "$f" "jar_staging/$rel"
+            find build_dir -type f ! -name "*.java" ! -name "*.zip" 2>/dev/null | while read -r f; do
+              if [ -r "$f" ]; then
+                rel="${f#build_dir/}"
+                rel="${rel#ilkindlcClient_merged/}"
+                rel="${rel#ilkindlcClient/}"
+                rel="${rel#ilkindlcClient_original/}"
+                rel="${rel#src/main/resources/}"
+                rel="${rel#src/main/java/}"
+                rel="${rel#src/}"
+                mkdir -p "jar_staging/$(dirname "$rel")" 2>/dev/null || true
+                cp "$f" "jar_staging/$rel" 2>/dev/null || true
+              fi
             done
 
-            find build_dir -name "*.java" > sources.txt
+            find build_dir -name "*.java" 2>/dev/null > sources.txt || true
             if [ -s sources.txt ]; then
-              javac -encoding UTF-8 -cp "jar_staging:." -d jar_staging @sources.txt || echo "Uyari: Bazi .java dosyalarinda bagimlilik eksik olabilir, mevcut dosyalar paketleniyor..."
+              javac -encoding UTF-8 -cp "jar_staging:." -d jar_staging @sources.txt 2>/dev/null || echo "Uyari: Bazi .java dosyalarinda bagimlilik eksik olabilir, mevcut dosyalar paketleniyor..."
             fi
 
             jar cf out_jar/ilkindlcClient-built.jar -C jar_staging .

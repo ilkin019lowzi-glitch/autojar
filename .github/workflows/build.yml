@@ -1,5 +1,6 @@
 name: Auto Build JAR
 on:
+  workflow_dispatch:
   push:
     paths:
       - 'project.zip'
@@ -66,3 +67,4 @@ jobs:
         with:
           name: compiled-jar
           path: out_jar/*.jar
+          

@@ -19,8 +19,8 @@ jobs:
 
       - name: Unzip and Build JAR
         run: |
-          rm -rf build_dir out_jar jar_staging base_jar_dir compile_cp
-          mkdir -p build_dir out_jar jar_staging base_jar_dir compile_cp
+          rm -rf build_dir out_jar jar_staging compile_cp
+          mkdir -p build_dir out_jar jar_staging compile_cp
 
           if [ ! -f "ilkindlcc.zip" ]; then
             echo "HATA: Repoda ilkindlcc.zip bulunamadi!"
@@ -31,16 +31,22 @@ jobs:
           unzip -q ilkindlcc.zip -d build_dir
           chmod -R u+rwX build_dir 2>/dev/null || true
 
-          # Test dosyalarini ve stub klasorunu cikis paketinden ayir
-          find build_dir -path "*/test/*" -o -path "*/stubs/*" -o -name "*Test.java" -o -name "*Test.class" -exec rm -rf {} + 2>/dev/null || true
+          # DUZELTME 1: Parantez eklendi. Onceden -exec sadece son kosula (*Test.class)
+          # uygulaniyordu, test/ ve stubs/ klasorleri ve *Test.java dosyalari SILINMIYORDU.
+          # Bu yuzden stub Setting/Box/Vec3d siniflari derlenip gercek siniflarin uzerine yaziliyordu.
+          find build_dir \( -path "*/test/*" -o -path "*/tests/*" -o -path "*/stubs/*" -o -path "*/stub/*" -o -name "*Test.java" -o -name "*Test.class" \) -exec rm -rf {} + 2>/dev/null || true
 
-          # 1. Varsa hazir temel JAR dosyasini jar_staging içine ac
+          # 1. Varsa hazir temel JAR dosyasini jar_staging icine ac
           BASE_JAR=$(find build_dir -type f -name "*.jar" | head -n 1)
           if [ -n "$BASE_JAR" ]; then
             echo "Temel JAR bulundu ve aciliyor: $BASE_JAR"
             unzip -qo "$BASE_JAR" -d jar_staging 2>/dev/null || true
             cp "$BASE_JAR" compile_cp/base.jar 2>/dev/null || true
           fi
+
+          # DUZELTME 2: Temel JAR'dan gelebilecek vanilla Minecraft stub siniflarini ve test siniflarini temizle
+          rm -rf jar_staging/net/minecraft
+          find jar_staging -name "*Test.class" -o -name "*Test\$*.class" | xargs -r rm -f
 
           # 2. Resources altindaki ses, sounds.json ve diger kaynaklari ekle
           find build_dir -path "*/resources/*" -type f 2>/dev/null | while read -r rf; do
@@ -60,20 +66,37 @@ jobs:
             fi
           done
 
-          # 4. Kaynak .java dosyalarini src/ kokune gore derle ve jar_staging icine yaz
+          # 4. Kaynak .java dosyalarini derle
           find build_dir -name "*.java" 2>/dev/null > sources.txt || true
           if [ -s sources.txt ]; then
             echo "Java kaynaklari derleniyor..."
             CP="jar_staging:compile_cp/*"
             while IFS= read -r jf; do
               [ -r "$jf" ] || continue
+              # DUZELTME 3: Hatalar artik gizlenmiyor, logda gorunur
               if [[ "$jf" == *"/src/"* ]]; then
                 src_root="${jf%%/src/*}/src"
-                javac -encoding UTF-8 -cp "$CP" -sourcepath "$src_root" -d jar_staging "$jf" 2>/dev/null || true
+                javac -encoding UTF-8 -cp "$CP" -sourcepath "$src_root" -d jar_staging "$jf" || echo "DERLEME HATASI: $jf"
               else
-                javac -encoding UTF-8 -cp "$CP" -d jar_staging "$jf" 2>/dev/null || true
+                javac -encoding UTF-8 -cp "$CP" -d jar_staging "$jf" || echo "DERLEME HATASI: $jf"
               fi
             done < sources.txt
+          fi
+
+          # DUZELTME 4: Derleme sonrasi tekrar temizle ve kontrol et
+          rm -rf jar_staging/net/minecraft
+          find jar_staging -name "*Test.class" -o -name "*Test\$*.class" | xargs -r rm -f
+
+          if [ -f jar_staging/thunder/hack/setting/Setting.class ]; then
+            SZ=$(stat -c%s jar_staging/thunder/hack/setting/Setting.class)
+            echo "Setting.class boyutu: $SZ bayt"
+            if [ "$SZ" -lt 1500 ]; then
+              echo "HATA: Setting.class stub gibi gorunuyor (cok kucuk). Zip'teki Setting.java dosyasini kontrol et."
+              exit 1
+            fi
+          else
+            echo "HATA: Setting.class yok!"
+            exit 1
           fi
 
           # 5. Tek bir final JAR olustur

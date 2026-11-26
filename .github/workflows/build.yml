@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - 'ilkindl.zip'
+      - 'ilkindlcc.zip'
 
 jobs:
   build:
@@ -19,76 +19,65 @@ jobs:
 
       - name: Unzip and Build JAR
         run: |
-          rm -rf build_dir out_jar jar_staging
-          mkdir -p build_dir out_jar jar_staging
+          rm -rf build_dir out_jar jar_staging base_jar_dir compile_cp
+          mkdir -p build_dir out_jar jar_staging base_jar_dir compile_cp
 
-          if [ ! -f "ilkindl.zip" ]; then
-            echo "HATA: Repoda ilkindl.zip bulunamadi!"
+          if [ ! -f "ilkindlcc.zip" ]; then
+            echo "HATA: Repoda ilkindlcc.zip bulunamadi!"
             ls -la
             exit 1
           fi
 
-          unzip -q ilkindl.zip -d build_dir
+          unzip -q ilkindlcc.zip -d build_dir
           chmod -R u+rwX build_dir 2>/dev/null || true
 
-          find build_dir -path "*/test/*" -o -name "*Test.java" -o -name "*Test.class" -exec rm -rf {} + 2>/dev/null || true
+          # Test dosyalarini ve stub klasorunu cikis paketinden ayir
+          find build_dir -path "*/test/*" -o -path "*/stubs/*" -o -name "*Test.java" -o -name "*Test.class" -exec rm -rf {} + 2>/dev/null || true
 
-          POM=$(find build_dir -name "pom.xml" 2>/dev/null | head -n 1)
-          GRADLE=$(find build_dir -name "build.gradle*" 2>/dev/null | head -n 1)
-
-          MAVEN_OK=0
-          if [ -n "$POM" ]; then
-            echo "Maven projesi bulundu, derleniyor..."
-            POM_DIR="$(dirname "$POM")"
-            if mvn -f "$POM" clean package -DskipTests -Dmaven.antrun.skip=true; then
-              find "$POM_DIR" -type f -name "*.jar" ! -name "*original*" ! -name "*sources*" ! -name "*javadoc*" -exec cp {} "$GITHUB_WORKSPACE/out_jar/" \; 2>/dev/null || true
-              if [ -n "$(ls -A "$GITHUB_WORKSPACE/out_jar" 2>/dev/null)" ]; then
-                MAVEN_OK=1
-              fi
-            else
-              echo "Uyari: Maven antrun/eksik dosya nedeniyle durdu, mevcut dosyalar paketleniyor..."
-            fi
+          # 1. Varsa hazir temel JAR dosyasini jar_staging içine ac
+          BASE_JAR=$(find build_dir -type f -name "*.jar" | head -n 1)
+          if [ -n "$BASE_JAR" ]; then
+            echo "Temel JAR bulundu ve aciliyor: $BASE_JAR"
+            unzip -qo "$BASE_JAR" -d jar_staging 2>/dev/null || true
+            cp "$BASE_JAR" compile_cp/base.jar 2>/dev/null || true
           fi
 
-          if [ "$MAVEN_OK" -eq 0 ] && [ -n "$GRADLE" ]; then
-            echo "Gradle projesi bulundu, derleniyor..."
-            GRADLE_DIR="$(dirname "$GRADLE")"
-            (
-              cd "$GRADLE_DIR"
-              if [ -f "gradlew" ]; then
-                chmod +x gradlew
-                ./gradlew build -x test
+          # 2. Resources altindaki ses, sounds.json ve diger kaynaklari ekle
+          find build_dir -path "*/resources/*" -type f 2>/dev/null | while read -r rf; do
+            if [ -r "$rf" ]; then
+              rrel="${rf#*resources/}"
+              mkdir -p "jar_staging/$(dirname "$rrel")" 2>/dev/null || true
+              cp "$rf" "jar_staging/$rrel" 2>/dev/null || true
+            fi
+          done
+
+          # 3. ilkindlc/configs ve ilkindlc/misc gibi proje dosyalarini ekle
+          find build_dir -path "*/ilkindlc/*" -type f 2>/dev/null | while read -r cf; do
+            if [ -r "$cf" ]; then
+              crel="ilkindlc/${cf#*ilkindlc/}"
+              mkdir -p "jar_staging/$(dirname "$crel")" 2>/dev/null || true
+              cp "$cf" "jar_staging/$crel" 2>/dev/null || true
+            fi
+          done
+
+          # 4. Kaynak .java dosyalarini src/ kokune gore derle ve jar_staging icine yaz
+          find build_dir -name "*.java" 2>/dev/null > sources.txt || true
+          if [ -s sources.txt ]; then
+            echo "Java kaynaklari derleniyor..."
+            CP="jar_staging:compile_cp/*"
+            while IFS= read -r jf; do
+              [ -r "$jf" ] || continue
+              if [[ "$jf" == *"/src/"* ]]; then
+                src_root="${jf%%/src/*}/src"
+                javac -encoding UTF-8 -cp "$CP" -sourcepath "$src_root" -d jar_staging "$jf" 2>/dev/null || true
               else
-                gradle build -x test
+                javac -encoding UTF-8 -cp "$CP" -d jar_staging "$jf" 2>/dev/null || true
               fi
-            ) && find "$GRADLE_DIR" -type f -name "*.jar" ! -name "*original*" ! -name "*sources*" ! -name "*javadoc*" -exec cp {} "$GITHUB_WORKSPACE/out_jar/" \; 2>/dev/null || true
+            done < sources.txt
           fi
 
-          if [ -z "$(ls -A out_jar 2>/dev/null)" ]; then
-            echo "Erisilebilen mevcut dosyalar toplanip tek JAR yapiliyor..."
-
-            find build_dir -type f ! -name "*.java" ! -name "*.zip" 2>/dev/null | while read -r f; do
-              if [ -r "$f" ]; then
-                rel="${f#build_dir/}"
-                rel="${rel#ilkindlcClient_merged/}"
-                rel="${rel#ilkindlcClient/}"
-                rel="${rel#ilkindlcClient_original/}"
-                rel="${rel#src/main/resources/}"
-                rel="${rel#src/main/java/}"
-                rel="${rel#src/}"
-                mkdir -p "jar_staging/$(dirname "$rel")" 2>/dev/null || true
-                cp "$f" "jar_staging/$rel" 2>/dev/null || true
-              fi
-            done
-
-            find build_dir -name "*.java" 2>/dev/null > sources.txt || true
-            if [ -s sources.txt ]; then
-              javac -encoding UTF-8 -cp "jar_staging:." -d jar_staging @sources.txt 2>/dev/null || echo "Uyari: Bazi .java dosyalarinda bagimlilik eksik olabilir, mevcut dosyalar paketleniyor..."
-            fi
-
-            jar cf out_jar/ilkindlcClient-built.jar -C jar_staging .
-          fi
-
+          # 5. Tek bir final JAR olustur
+          jar cf out_jar/ilkindlcc-built.jar -C jar_staging .
           ls -lh out_jar/
 
       - name: Upload JAR Artifact
